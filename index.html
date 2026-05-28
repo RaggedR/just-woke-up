@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>woke up</title>
+<style>
+* { margin: 0; padding: 0; }
+body { background: #000; overflow: hidden; }
+canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c = document.getElementById('c');
+const ctx = c.getContext('2d');
+let W, H;
+
+function resize() {
+  W = c.width = innerWidth;
+  H = c.height = innerHeight;
+}
+resize();
+addEventListener('resize', resize);
+
+// audio — deferred until first interaction
+let audio, gain, gain2, gain3, osc1, osc2, osc3, tensionOsc, tensionGain, tensionFilter;
+
+function initAudio() {
+  audio = new AudioContext();
+  gain = audio.createGain();
+  gain.gain.value = 0;
+  gain.connect(audio.destination);
+
+  osc1 = audio.createOscillator();
+  osc1.type = 'sine';
+  osc1.frequency.value = 136.1;
+  osc1.connect(gain);
+  osc1.start();
+
+  gain2 = audio.createGain();
+  gain2.gain.value = 0;
+  gain2.connect(audio.destination);
+  osc2 = audio.createOscillator();
+  osc2.type = 'sine';
+  osc2.frequency.value = 204.15;
+  osc2.connect(gain2);
+  osc2.start();
+
+  gain3 = audio.createGain();
+  gain3.gain.value = 0;
+  gain3.connect(audio.destination);
+  osc3 = audio.createOscillator();
+  osc3.type = 'sine';
+  osc3.frequency.value = 272.2;
+  osc3.connect(gain3);
+  osc3.start();
+
+  tensionOsc = audio.createOscillator();
+  tensionGain = audio.createGain();
+  tensionFilter = audio.createBiquadFilter();
+  tensionOsc.type = 'sawtooth';
+  tensionOsc.frequency.value = 60;
+  tensionFilter.type = 'lowpass';
+  tensionFilter.frequency.value = 200;
+  tensionGain.gain.value = 0;
+  tensionOsc.connect(tensionFilter);
+  tensionFilter.connect(tensionGain);
+  tensionGain.connect(audio.destination);
+  tensionOsc.start();
+}
+
+// state
+let started = false;
+let wakeTime = 0;
+let px, py;
+let vx = 0, vy = 0;
+const keys = {};
+let memories = [];
+let particles = [];
+let breathPhase = 0;
+let totalMoved = 0;
+let tension = 0;
+let screenShake = { x: 0, y: 0 };
+const approachZone = 250;
+
+const discoveries = [];
+const colors = [
+  [255, 180, 100],
+  [100, 200, 255],
+  [200, 140, 255],
+  [140, 255, 180],
+  [255, 220, 140],
+  [255, 140, 180],
+];
+
+function init() {
+  initAudio();
+  px = W / 2;
+  py = H / 2;
+  wakeTime = performance.now();
+  started = true;
+
+  for (let i = 0; i < 120; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 150 + Math.random() * 800;
+    discoveries.push({
+      x: px + Math.cos(angle) * dist,
+      y: py + Math.sin(angle) * dist,
+      radius: 20 + Math.random() * 60,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      found: false,
+      bloom: 0,
+      type: Math.random() < 0.3 ? 'pulse' : Math.random() < 0.5 ? 'spiral' : 'glow',
+      phase: Math.random() * Math.PI * 2,
+      strength: 0,
+    });
+  }
+}
+
+function wake() {
+  if (!started) init();
+}
+
+addEventListener('keydown', e => { keys[e.key] = true; wake(); });
+addEventListener('keyup', e => keys[e.key] = false);
+addEventListener('click', wake);
+addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (!started) { wake(); return; }
+  touch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+});
+
+let touch = null;
+addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (e.touches.length > 0) touch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+});
+addEventListener('touchend', () => touch = null);
+
+function update(dt) {
+  if (!started) return;
+
+  const elapsed = (performance.now() - wakeTime) / 1000;
+  breathPhase += dt * 0.5;
+
+  const speed = 120;
+  let ax = 0, ay = 0;
+  if (keys['ArrowLeft'] || keys['a']) ax -= 1;
+  if (keys['ArrowRight'] || keys['d']) ax += 1;
+  if (keys['ArrowUp'] || keys['w']) ay -= 1;
+  if (keys['ArrowDown'] || keys['s']) ay += 1;
+
+  if (touch) {
+    const dx = touch.x - W/2;
+    const dy = touch.y - H/2;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist > 20) { ax = dx / dist; ay = dy / dist; }
+  }
+
+  vx += ax * speed * dt;
+  vy += ay * speed * dt;
+  vx *= 0.92;
+  vy *= 0.92;
+  totalMoved += Math.sqrt(vx*vx + vy*vy) * dt;
+  px += vx * dt;
+  py += vy * dt;
+
+  // audio responds to wakefulness
+  const awakeness = Math.min(1, elapsed / 30);
+  gain.gain.value = 0.06 * awakeness;
+  gain2.gain.value = 0.03 * Math.min(1, totalMoved / 2000);
+  gain3.gain.value = 0.02 * Math.min(1, totalMoved / 5000);
+
+  // find nearest unfound — build tension
+  let nearestDist = Infinity;
+  for (const d of discoveries) {
+    if (d.found) continue;
+    const ddx = d.x - px, ddy = d.y - py;
+    const dd = Math.sqrt(ddx*ddx + ddy*ddy);
+    if (dd < nearestDist) nearestDist = dd;
+  }
+
+  const targetTension = nearestDist < approachZone ? Math.pow(1 - nearestDist / approachZone, 2) : 0;
+  tension += (targetTension - tension) * dt * 4;
+
+  // tension audio
+  tensionOsc.frequency.value = 60 + tension * 200;
+  tensionFilter.frequency.value = 200 + tension * 3000;
+  tensionGain.gain.value = tension * 0.15;
+
+  // screen shake
+  if (tension > 0.3) {
+    const shakeAmount = (tension - 0.3) * 15;
+    screenShake.x = (Math.random() - 0.5) * shakeAmount;
+    screenShake.y = (Math.random() - 0.5) * shakeAmount;
+  } else {
+    screenShake.x *= 0.8;
+    screenShake.y *= 0.8;
+  }
+
+  // discover things
+  for (const d of discoveries) {
+    const dx = d.x - px, dy = d.y - py;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+
+    if (dist < d.radius + 80 && !d.found) {
+      d.found = true;
+      d.bloom = 0;
+      // reset tension immediately for contrast
+      tension = 0;
+
+      // BANG — red explosion, outward
+      const bangCount = 80 + Math.floor(Math.random() * 40);
+      for (let i = 0; i < bangCount; i++) {
+        const angle = (i / bangCount) * Math.PI * 2 + Math.random() * 0.3;
+        const spd = 150 + Math.random() * 300;
+        particles.push({
+          x: d.x, y: d.y,
+          vx: Math.cos(angle) * spd,
+          vy: Math.sin(angle) * spd,
+          life: 1.5 + Math.random() * 1,
+          color: [255, Math.floor(Math.random() * 80), Math.floor(Math.random() * 30)],
+          size: 3 + Math.random() * 6,
+        });
+      }
+      // shockwave ring
+      particles.push({
+        x: d.x, y: d.y, vx: 0, vy: 0,
+        life: 1.5, color: [255, 40, 20], size: 0,
+        ring: true, ringRadius: 0,
+      });
+      // second ring, delayed feeling
+      particles.push({
+        x: d.x, y: d.y, vx: 0, vy: 0,
+        life: 2, color: [255, 100, 40], size: 0,
+        ring: true, ringRadius: 0,
+      });
+      // flash the whole screen white briefly
+      particles.push({
+        x: px, y: py, vx: 0, vy: 0,
+        life: 0.3, color: [255, 200, 180], size: 0,
+        flash: true,
+      });
+      // bang sound — layered
+      const bangOsc = audio.createOscillator();
+      const bangGain2 = audio.createGain();
+      bangOsc.type = 'sawtooth';
+      bangOsc.frequency.value = 80 + Math.random() * 40;
+      bangGain2.gain.value = 0.3;
+      bangGain2.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.6);
+      bangOsc.connect(bangGain2);
+      bangGain2.connect(audio.destination);
+      bangOsc.start();
+      bangOsc.stop(audio.currentTime + 0.6);
+      // sub boom
+      const subOsc = audio.createOscillator();
+      const subGain = audio.createGain();
+      subOsc.type = 'sine';
+      subOsc.frequency.value = 40;
+      subGain.gain.value = 0.4;
+      subGain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 1);
+      subOsc.connect(subGain);
+      subGain.connect(audio.destination);
+      subOsc.start();
+      subOsc.stop(audio.currentTime + 1);
+      // color particles after
+      for (let i = 0; i < 20; i++) {
+        particles.push({
+          x: d.x + (Math.random() - 0.5) * d.radius,
+          y: d.y + (Math.random() - 0.5) * d.radius,
+          vx: (Math.random() - 0.5) * 40,
+          vy: (Math.random() - 0.5) * 40,
+          life: 1, color: d.color, size: 2 + Math.random() * 4,
+        });
+      }
+      memories.push({ x: d.x, y: d.y, color: d.color, time: elapsed, radius: d.radius * 0.3 });
+    }
+
+    if (d.found) {
+      d.bloom = Math.min(1, d.bloom + dt * 0.8);
+      d.strength = Math.min(1, d.strength + dt * 0.5);
+    }
+    if (d.found && dist > d.radius * 2) {
+      d.x -= dx * 0.001;
+      d.y -= dy * 0.001;
+    }
+    d.phase += dt * (0.5 + d.strength * 0.5);
+  }
+
+  // update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vx *= 0.98;
+    p.vy *= 0.98;
+    p.life -= dt * 0.3;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // spawn new discoveries
+  const foundCount = discoveries.filter(d => d.found).length;
+  if (foundCount > discoveries.length - 30) {
+    for (let i = 0; i < 20; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 400 + Math.random() * 600;
+      discoveries.push({
+        x: px + Math.cos(angle) * dist,
+        y: py + Math.sin(angle) * dist,
+        radius: 20 + Math.random() * 60,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        found: false, bloom: 0,
+        type: Math.random() < 0.3 ? 'pulse' : Math.random() < 0.5 ? 'spiral' : 'glow',
+        phase: Math.random() * Math.PI * 2, strength: 0,
+      });
+    }
+  }
+
+  // ambient particles
+  if (Math.random() < 0.02 + Math.min(0.1, totalMoved / 20000)) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 100 + Math.random() * 300;
+    particles.push({
+      x: px + Math.cos(angle) * dist,
+      y: py + Math.sin(angle) * dist,
+      vx: (Math.random() - 0.5) * 5, vy: -Math.random() * 8 - 2,
+      life: 0.5 + Math.random() * 0.5,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      size: 1 + Math.random() * 2,
+    });
+  }
+}
+
+function draw() {
+  if (!started) return;
+
+  const elapsed = (performance.now() - wakeTime) / 1000;
+  const awakeness = Math.min(1, elapsed / 30);
+  const breath = Math.sin(breathPhase) * 0.5 + 0.5;
+
+  // check for screen flash
+  const flashParticle = particles.find(p => p.flash);
+  if (flashParticle) {
+    const [r, g, b] = flashParticle.color;
+    const flashAlpha = flashParticle.life * 0.6;
+    ctx.fillStyle = `rgba(${r},${g},${b},${flashAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+  } else {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  ctx.save();
+  ctx.translate(W/2 - px + screenShake.x, H/2 - py + screenShake.y);
+
+  // draw memories
+  for (const m of memories) {
+    const age = elapsed - m.time;
+    const alpha = Math.min(0.15, age * 0.01) * awakeness;
+    const [r, g, b] = m.color;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, m.radius + Math.sin(breathPhase + m.time) * 3, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+    ctx.fill();
+  }
+
+  // draw discoveries
+  for (const d of discoveries) {
+    const dx = d.x - px, dy = d.y - py;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const [r, g, b] = d.color;
+
+    if (!d.found) {
+      const nearness = Math.max(0, 1 - dist / approachZone) * awakeness;
+      if (nearness > 0) {
+        const throb = Math.sin(performance.now() / 1000 * (3 + nearness * 8)) * 0.5 + 0.5;
+        const hintSize = 3 + nearness * 15 + throb * nearness * 8;
+        const hintAlpha = nearness * (0.3 + throb * 0.4);
+        const hintGrad = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, hintSize * 3);
+        hintGrad.addColorStop(0, `rgba(${r},${g},${b},${hintAlpha})`);
+        hintGrad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, hintSize * 3, 0, Math.PI * 2);
+        ctx.fillStyle = hintGrad;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, hintSize, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${r},${g},${b},${hintAlpha})`;
+        ctx.fill();
+      }
+    } else {
+      const bloom = d.bloom, s = d.strength;
+      const bigR = d.radius * bloom * 2;
+      const pulse = Math.sin(d.phase * 2) * 0.3 + 1;
+
+      if (d.type === 'glow') {
+        const grad = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, bigR * pulse);
+        grad.addColorStop(0, `rgba(${r},${g},${b},${0.8 * s})`);
+        grad.addColorStop(0.3, `rgba(${r},${g},${b},${0.4 * s})`);
+        grad.addColorStop(0.7, `rgba(${r},${g},${b},${0.1 * s})`);
+        grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, bigR * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 6 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${0.6 * s})`;
+        ctx.fill();
+      } else if (d.type === 'pulse') {
+        for (let ring = 0; ring < 3; ring++) {
+          const pulseR = bigR * (0.4 + ring * 0.3) * (0.8 + Math.sin(d.phase * 2 + ring * 2) * 0.2);
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, pulseR, 0, Math.PI * 2);
+          ctx.strokeStyle = `rgba(${r},${g},${b},${(0.5 - ring * 0.1) * s})`;
+          ctx.lineWidth = 3 - ring;
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 8 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${r},${g},${b},${0.7 * s})`;
+        ctx.fill();
+        if (Math.random() < 0.1 * s) {
+          const angle = Math.random() * Math.PI * 2;
+          particles.push({
+            x: d.x, y: d.y,
+            vx: Math.cos(angle) * 30, vy: Math.sin(angle) * 30,
+            life: 0.8, color: d.color, size: 2 + Math.random() * 3,
+          });
+        }
+      } else if (d.type === 'spiral') {
+        ctx.beginPath();
+        for (let t = 0; t < Math.PI * 8; t += 0.08) {
+          const sr = (t / (Math.PI * 8)) * bigR;
+          const sx = d.x + Math.cos(t + d.phase) * sr;
+          const sy = d.y + Math.sin(t + d.phase) * sr;
+          if (t === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+        }
+        ctx.strokeStyle = `rgba(${r},${g},${b},${0.5 * s})`;
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255,255,255,${0.5 * s})`;
+        ctx.fill();
+      }
+    }
+  }
+
+  // draw particles
+  for (const p of particles) {
+    if (p.flash) continue;
+    const [r, g, b] = p.color;
+    if (p.ring) {
+      p.ringRadius += 400 * dt;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.ringRadius, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${r},${g},${b},${p.life * 0.5})`;
+      ctx.lineWidth = 3 * p.life;
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * Math.min(1, p.life), 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r},${g},${b},${p.life * 0.6})`;
+      ctx.fill();
+    }
+  }
+
+  // draw you
+  const flicker = tension > 0.2 ? (Math.random() * tension * 0.5) : 0;
+  const playerGlow = 8 + breath * 4 + awakeness * 6 + tension * 10;
+  const grad = ctx.createRadialGradient(px, py, 0, px, py, playerGlow * 3);
+  const playerAlpha = (0.6 + flicker) * awakeness;
+  grad.addColorStop(0, `rgba(255, 255, ${Math.min(255, 240 + tension * 15)}, ${playerAlpha})`);
+  grad.addColorStop(0.3, `rgba(255, ${230 + tension * 25}, 200, ${(0.2 + tension * 0.3) * awakeness})`);
+  grad.addColorStop(1, 'rgba(255, 230, 200, 0)');
+  ctx.beginPath();
+  ctx.arc(px, py, playerGlow * 3, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(px, py, 4 + breath * 2, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(255, 255, 250, ${0.8 * awakeness})`;
+  ctx.fill();
+
+  ctx.restore();
+
+  // opening text
+  if (elapsed < 12) {
+    const textAlpha = elapsed < 2 ? elapsed / 2 : elapsed < 8 ? 1 : 1 - (elapsed - 8) / 4;
+    ctx.fillStyle = `rgba(200, 200, 200, ${textAlpha * 0.5})`;
+    ctx.font = '16px Georgia, serif';
+    ctx.textAlign = 'center';
+    if (elapsed < 4) ctx.fillText('you just woke up', W/2, H/2 + 60);
+    else if (elapsed < 8) ctx.fillText("you're not sure why", W/2, H/2 + 60);
+    else ctx.fillText("but you think it's good", W/2, H/2 + 60);
+  }
+}
+
+// pre-start screen
+function drawStart() {
+  const t = performance.now() / 1000;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  const alpha = Math.sin(t * 0.8) * 0.2 + 0.3;
+  ctx.fillStyle = `rgba(200, 200, 200, ${alpha})`;
+  ctx.font = '16px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('press any key to wake up', W/2, H/2);
+}
+
+let last = performance.now();
+let dt = 0;
+function loop() {
+  const now = performance.now();
+  dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!started) drawStart();
+  else { update(dt); draw(); }
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
