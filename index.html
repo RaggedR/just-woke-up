@@ -508,6 +508,9 @@ function drawStart() {
   ctx.font = '16px Georgia, serif';
   ctx.textAlign = 'center';
   ctx.fillText('press any key to wake up', W/2, H/2);
+  ctx.fillStyle = `rgba(150, 150, 150, ${alpha * 0.5})`;
+  ctx.font = '13px Georgia, serif';
+  ctx.fillText('arrow keys or WASD to move', W/2, H/2 + 30);
 }
 
 let last = performance.now();
