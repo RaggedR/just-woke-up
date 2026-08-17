@@ -86,15 +86,32 @@ addEventListener('keydown', e => { keys[e.key] = true; wake(); });
 addEventListener('keyup', e => keys[e.key] = false);
 addEventListener('click', e => {
   if (!started) { wake(); return; }
-  // Spawn a spiral explosion at the click position (in world coords)
   const wx = e.clientX - W/2 + px - screenShake.x;
   const wy = e.clientY - H/2 + py - screenShake.y;
   const color = colors[Math.floor(Math.random() * colors.length)];
-  const [cr, cg, cb] = color;
-  const isSpiral = Math.random() < 0.5;
+  const roll = Math.random();
 
-  if (isSpiral) {
-    // Spiral particle burst
+  if (roll < 0.33) {
+    // Type 1: Radial explosion
+    const count = 60 + Math.floor(Math.random() * 40);
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+      const spd = 100 + Math.random() * 250;
+      particles.push({
+        x: wx, y: wy,
+        vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd,
+        life: 1.2 + Math.random() * 0.8, color, size: 2 + Math.random() * 5,
+      });
+    }
+    particles.push({ x: wx, y: wy, vx: 0, vy: 0, life: 1.2, color, size: 0, ring: true, ringRadius: 0 });
+    // Boom sound
+    const osc = audio.createOscillator();
+    const g = audio.createGain();
+    osc.type = 'sawtooth'; osc.frequency.value = 80 + Math.random() * 40;
+    g.gain.value = 0.2; g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.5);
+    osc.connect(g); g.connect(audio.destination); osc.start(); osc.stop(audio.currentTime + 0.5);
+  } else if (roll < 0.66) {
+    // Type 2: Spiral burst
     const arms = 3 + Math.floor(Math.random() * 3);
     for (let arm = 0; arm < arms; arm++) {
       const baseAngle = (arm / arms) * Math.PI * 2;
@@ -104,45 +121,43 @@ addEventListener('click', e => {
         const spd = 50 + t * 200;
         particles.push({
           x: wx, y: wy,
-          vx: Math.cos(angle) * spd,
-          vy: Math.sin(angle) * spd,
-          life: 1.5 + Math.random() * 0.5,
-          color, size: 2 + (1 - t) * 4,
+          vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd,
+          life: 1.5 + Math.random() * 0.5, color, size: 2 + (1 - t) * 4,
         });
       }
     }
+    // Shimmer sound
+    const osc = audio.createOscillator();
+    const g = audio.createGain();
+    osc.type = 'sine'; osc.frequency.value = 300 + Math.random() * 400;
+    g.gain.value = 0.12; g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.6);
+    osc.connect(g); g.connect(audio.destination); osc.start(); osc.stop(audio.currentTime + 0.6);
   } else {
-    // Radial explosion
-    const count = 60 + Math.floor(Math.random() * 40);
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
-      const spd = 100 + Math.random() * 250;
-      particles.push({
-        x: wx, y: wy,
-        vx: Math.cos(angle) * spd,
-        vy: Math.sin(angle) * spd,
-        life: 1.2 + Math.random() * 0.8,
-        color, size: 2 + Math.random() * 5,
+    // Type 3: Shiny balls that drift and will crash into each other
+    const numBalls = 4 + Math.floor(Math.random() * 5);
+    for (let i = 0; i < numBalls; i++) {
+      const angle = (i / numBalls) * Math.PI * 2 + Math.random() * 0.5;
+      const spd = 30 + Math.random() * 50;
+      const ballColor = colors[Math.floor(Math.random() * colors.length)];
+      discoveries.push({
+        x: wx + Math.cos(angle) * 20,
+        y: wy + Math.sin(angle) * 20,
+        radius: 15 + Math.random() * 25,
+        color: ballColor,
+        found: true, bloom: 1, strength: 1,
+        type: Math.random() < 0.5 ? 'glow' : 'pulse',
+        phase: Math.random() * Math.PI * 2,
+        dvx: Math.cos(angle) * spd,
+        dvy: Math.sin(angle) * spd,
       });
     }
+    // Chime sound
+    const osc = audio.createOscillator();
+    const g = audio.createGain();
+    osc.type = 'sine'; osc.frequency.value = 500 + Math.random() * 300;
+    g.gain.value = 0.1; g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.8);
+    osc.connect(g); g.connect(audio.destination); osc.start(); osc.stop(audio.currentTime + 0.8);
   }
-  // Shockwave ring
-  particles.push({
-    x: wx, y: wy, vx: 0, vy: 0,
-    life: 1.2, color, size: 0,
-    ring: true, ringRadius: 0,
-  });
-  // Pop sound
-  const popOsc = audio.createOscillator();
-  const popGain = audio.createGain();
-  popOsc.type = isSpiral ? 'sine' : 'triangle';
-  popOsc.frequency.value = 200 + Math.random() * 300;
-  popGain.gain.value = 0.15;
-  popGain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.4);
-  popOsc.connect(popGain);
-  popGain.connect(audio.destination);
-  popOsc.start();
-  popOsc.stop(audio.currentTime + 0.4);
 });
 addEventListener('touchstart', e => {
   e.preventDefault();
