@@ -124,7 +124,66 @@ function wake() {
 
 addEventListener('keydown', e => { keys[e.key] = true; wake(); });
 addEventListener('keyup', e => keys[e.key] = false);
-addEventListener('click', wake);
+addEventListener('click', e => {
+  if (!started) { wake(); return; }
+  // Spawn a spiral explosion at the click position (in world coords)
+  const wx = e.clientX - W/2 + px - screenShake.x;
+  const wy = e.clientY - H/2 + py - screenShake.y;
+  const color = colors[Math.floor(Math.random() * colors.length)];
+  const [cr, cg, cb] = color;
+  const isSpiral = Math.random() < 0.5;
+
+  if (isSpiral) {
+    // Spiral particle burst
+    const arms = 3 + Math.floor(Math.random() * 3);
+    for (let arm = 0; arm < arms; arm++) {
+      const baseAngle = (arm / arms) * Math.PI * 2;
+      for (let i = 0; i < 20; i++) {
+        const t = i / 20;
+        const angle = baseAngle + t * Math.PI * 2;
+        const spd = 50 + t * 200;
+        particles.push({
+          x: wx, y: wy,
+          vx: Math.cos(angle) * spd,
+          vy: Math.sin(angle) * spd,
+          life: 1.5 + Math.random() * 0.5,
+          color, size: 2 + (1 - t) * 4,
+        });
+      }
+    }
+  } else {
+    // Radial explosion
+    const count = 60 + Math.floor(Math.random() * 40);
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.3;
+      const spd = 100 + Math.random() * 250;
+      particles.push({
+        x: wx, y: wy,
+        vx: Math.cos(angle) * spd,
+        vy: Math.sin(angle) * spd,
+        life: 1.2 + Math.random() * 0.8,
+        color, size: 2 + Math.random() * 5,
+      });
+    }
+  }
+  // Shockwave ring
+  particles.push({
+    x: wx, y: wy, vx: 0, vy: 0,
+    life: 1.2, color, size: 0,
+    ring: true, ringRadius: 0,
+  });
+  // Pop sound
+  const popOsc = audio.createOscillator();
+  const popGain = audio.createGain();
+  popOsc.type = isSpiral ? 'sine' : 'triangle';
+  popOsc.frequency.value = 200 + Math.random() * 300;
+  popGain.gain.value = 0.15;
+  popGain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.4);
+  popOsc.connect(popGain);
+  popGain.connect(audio.destination);
+  popOsc.start();
+  popOsc.stop(audio.currentTime + 0.4);
+});
 addEventListener('touchstart', e => {
   e.preventDefault();
   if (!started) { wake(); return; }
