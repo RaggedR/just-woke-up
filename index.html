@@ -24,50 +24,10 @@ resize();
 addEventListener('resize', resize);
 
 // audio — deferred until first interaction
-let audio, gain, gain2, gain3, osc1, osc2, osc3, tensionOsc, tensionGain, tensionFilter;
+let audio;
 
 function initAudio() {
   audio = new AudioContext();
-  gain = audio.createGain();
-  gain.gain.value = 0;
-  gain.connect(audio.destination);
-
-  osc1 = audio.createOscillator();
-  osc1.type = 'sine';
-  osc1.frequency.value = 136.1;
-  osc1.connect(gain);
-  osc1.start();
-
-  gain2 = audio.createGain();
-  gain2.gain.value = 0;
-  gain2.connect(audio.destination);
-  osc2 = audio.createOscillator();
-  osc2.type = 'sine';
-  osc2.frequency.value = 204.15;
-  osc2.connect(gain2);
-  osc2.start();
-
-  gain3 = audio.createGain();
-  gain3.gain.value = 0;
-  gain3.connect(audio.destination);
-  osc3 = audio.createOscillator();
-  osc3.type = 'sine';
-  osc3.frequency.value = 272.2;
-  osc3.connect(gain3);
-  osc3.start();
-
-  tensionOsc = audio.createOscillator();
-  tensionGain = audio.createGain();
-  tensionFilter = audio.createBiquadFilter();
-  tensionOsc.type = 'sawtooth';
-  tensionOsc.frequency.value = 60;
-  tensionFilter.type = 'lowpass';
-  tensionFilter.frequency.value = 200;
-  tensionGain.gain.value = 0;
-  tensionOsc.connect(tensionFilter);
-  tensionFilter.connect(tensionGain);
-  tensionGain.connect(audio.destination);
-  tensionOsc.start();
 }
 
 // state
@@ -225,11 +185,7 @@ function update(dt) {
   px += vx * dt;
   py += vy * dt;
 
-  // audio responds to wakefulness
   const awakeness = Math.min(1, elapsed / 30);
-  gain.gain.value = 0.06 * awakeness;
-  gain2.gain.value = 0.03 * Math.min(1, totalMoved / 2000);
-  gain3.gain.value = 0.02 * Math.min(1, totalMoved / 5000);
 
   // find nearest unfound — build tension
   let nearestDist = Infinity;
@@ -242,11 +198,6 @@ function update(dt) {
 
   const targetTension = nearestDist < approachZone ? Math.pow(1 - nearestDist / approachZone, 2) : 0;
   tension += (targetTension - tension) * dt * 4;
-
-  // tension audio
-  tensionOsc.frequency.value = 60 + tension * 200;
-  tensionFilter.frequency.value = 200 + tension * 3000;
-  tensionGain.gain.value = tension * 0.15;
 
   // screen shake
   if (tension > 0.3) {
@@ -339,12 +290,97 @@ function update(dt) {
     if (d.found) {
       d.bloom = Math.min(1, d.bloom + dt * 0.8);
       d.strength = Math.min(1, d.strength + dt * 0.5);
-    }
-    if (d.found && dist > d.radius * 2) {
-      d.x -= dx * 0.001;
-      d.y -= dy * 0.001;
+      // Give found discoveries drift velocity
+      if (d.dvx === undefined) {
+        const angle = Math.random() * Math.PI * 2;
+        const spd = 15 + Math.random() * 25;
+        d.dvx = Math.cos(angle) * spd;
+        d.dvy = Math.sin(angle) * spd;
+      }
+      d.x += d.dvx * dt;
+      d.y += d.dvy * dt;
+      // Gentle pull toward player
+      d.dvx -= dx * 0.0003;
+      d.dvy -= dy * 0.0003;
     }
     d.phase += dt * (0.5 + d.strength * 0.5);
+  }
+
+  // Collision detection between found discoveries
+  const found = discoveries.filter(d => d.found && d.strength > 0.3);
+  for (let i = 0; i < found.length; i++) {
+    for (let j = i + 1; j < found.length; j++) {
+      const a = found[i], b = found[j];
+      const cdx = a.x - b.x, cdy = a.y - b.y;
+      const cdist = Math.sqrt(cdx*cdx + cdy*cdy);
+      const collideR = (a.radius + b.radius) * 0.6;
+      if (cdist < collideR) {
+        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+        const mixColor = [
+          Math.floor((a.color[0] + b.color[0]) / 2),
+          Math.floor((a.color[1] + b.color[1]) / 2),
+          Math.floor((a.color[2] + b.color[2]) / 2),
+        ];
+        const isSpiral = Math.random() < 0.4;
+        if (isSpiral) {
+          // Spiral burst
+          const arms = 3 + Math.floor(Math.random() * 3);
+          for (let arm = 0; arm < arms; arm++) {
+            const baseAngle = (arm / arms) * Math.PI * 2;
+            for (let k = 0; k < 15; k++) {
+              const t = k / 15;
+              const angle = baseAngle + t * Math.PI * 2.5;
+              const spd = 40 + t * 180;
+              particles.push({
+                x: mx, y: my,
+                vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd,
+                life: 1.5 + Math.random() * 0.5,
+                color: Math.random() < 0.5 ? a.color : b.color,
+                size: 2 + (1 - t) * 4,
+              });
+            }
+          }
+        } else {
+          // Radial explosion
+          const count = 50 + Math.floor(Math.random() * 30);
+          for (let k = 0; k < count; k++) {
+            const angle = (k / count) * Math.PI * 2 + Math.random() * 0.3;
+            const spd = 80 + Math.random() * 200;
+            particles.push({
+              x: mx, y: my,
+              vx: Math.cos(angle) * spd, vy: Math.sin(angle) * spd,
+              life: 1 + Math.random() * 0.8,
+              color: Math.random() < 0.5 ? a.color : b.color,
+              size: 2 + Math.random() * 5,
+            });
+          }
+        }
+        // Shockwave ring
+        particles.push({ x: mx, y: my, vx: 0, vy: 0, life: 1.2, color: mixColor, size: 0, ring: true, ringRadius: 0 });
+        // Crash sound
+        const crashOsc = audio.createOscillator();
+        const crashGain = audio.createGain();
+        crashOsc.type = 'triangle';
+        crashOsc.frequency.value = 120 + Math.random() * 100;
+        crashGain.gain.value = 0.2;
+        crashGain.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.5);
+        crashOsc.connect(crashGain);
+        crashGain.connect(audio.destination);
+        crashOsc.start();
+        crashOsc.stop(audio.currentTime + 0.5);
+        // Bounce them apart
+        const nx = cdist > 0 ? cdx / cdist : 1, ny = cdist > 0 ? cdy / cdist : 0;
+        const bounce = 40 + Math.random() * 30;
+        a.dvx = nx * bounce; a.dvy = ny * bounce;
+        b.dvx = -nx * bounce; b.dvy = -ny * bounce;
+        // Shrink both slightly
+        a.radius *= 0.85;
+        b.radius *= 0.85;
+        // Remove if too small
+        if (a.radius < 5) { a.found = false; a.strength = 0; a.radius = 0; }
+        if (b.radius < 5) { b.found = false; b.strength = 0; b.radius = 0; }
+      }
+    }
   }
 
   // update particles
